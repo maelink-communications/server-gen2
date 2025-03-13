@@ -136,7 +136,8 @@ async function auth(user, password) {
 }
 async function post(guild, content, token) {
   try {
-    const authCheck = clients.get(token);
+    const userStmt = db.prepare("SELECT name FROM users WHERE token = ?");
+    const authCheck = userStmt.get(token);
 
     if (!authCheck) {
       return new Response(JSON.stringify({ message: "Unauthorized" }), {
@@ -246,8 +247,8 @@ async function createCommunity(name, token) {
     });
   } else {
     db.exec(
-      "INSERT INTO communities (created, name, id, members) VALUES (?, ?, ?, ?)",
-      [Date.now(), name, crypto.randomUUID(), user],
+      "INSERT INTO communities (created, name, id, members, posts) VALUES (?, ?, ?, ?, ?)",
+      [Date.now(), name, crypto.randomUUID(), JSON.stringify([user.name]), "[]"],
     );
     return new Response(JSON.stringify({ message: "Created successfully" }), {
       status: 200,
@@ -357,6 +358,45 @@ async function fetch(guild, offset) {
     }
   }
 }
+async function fetchCommunities(token) {
+  try {
+    const userStmt = db.prepare("SELECT name FROM users WHERE token = ?");
+    const user = userStmt.get(token);
+
+    if (!user) {
+      return new Response(JSON.stringify({ message: "User not found" }), {
+        status: 404,
+        headers: CORS_HEADERS,
+      });
+    }
+
+    const communitiesStmt = db.prepare("SELECT * FROM communities");
+    const allCommunities = communitiesStmt.all();
+    console.log(allCommunities)
+    
+    const userCommunities = allCommunities.filter(community => {
+      try {
+        const members = JSON.parse(community.members);
+        console.log(members)
+        return Array.isArray(members) && members.includes(user.name);
+      } catch (e) {
+        return false;
+      }
+    });
+    console.log(userCommunities)
+
+    return new Response(JSON.stringify({ communities: userCommunities }), {
+      status: 200,
+      headers: CORS_HEADERS,
+    });
+  } catch (e) {
+    console.error("Fetch communities error:", e);
+    return new Response(JSON.stringify({ message: "Internal Server Error" }), {
+      status: 500,
+      headers: CORS_HEADERS,
+    });
+  }
+}
 Deno.serve({
   port: 4040,
   onListen() {
@@ -400,6 +440,7 @@ running on localhost:4040`,
   let fetchResult;
   let createResult;
   let joinResult;
+  let comfetchResult;
 
   switch (requestBody?.type) {
     case "reg": {
@@ -429,6 +470,10 @@ running on localhost:4040`,
     case "communityJoin": {
       joinResult = await joinCommunity(requestBody.name, requestBody.token);
       return joinResult;
+    }
+    case "communityFetch": {
+      comfetchResult = await fetchCommunities(requestBody.token);
+      return comfetchResult;
     }
     default: {
       const body = JSON.stringify({ message: "NOT FOUND" });
