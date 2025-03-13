@@ -68,7 +68,7 @@ async function register(user, password) {
           token,
         ],
       );
-      const respbody = JSON.stringify({ message: "Registered successfully" });
+      const respbody = JSON.stringify({ message: "Registered successfully", payload: { token } });
       return new Response(respbody, {
         status: 200,
         headers: CORS_HEADERS,
