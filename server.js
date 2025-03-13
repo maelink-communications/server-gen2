@@ -8,11 +8,12 @@ const CORS_HEADERS = {
   "Content-Type": "application/json",
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization"
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
   name TEXT PRIMARY KEY NOT NULL,
+  display_name TEXT NOT NULL,
   permissions TEXT NOT NULL,
   password TEXT NOT NULL,
   token TEXT NOT NULL,
@@ -28,6 +29,15 @@ db.exec(`
   p TEXT NOT NULL
   );
   `);
+db.exec(`
+  CREATE TABLE IF NOT EXISTS communities (
+  created INTEGER PRIMARY KEY NOT NULL,
+  name TEXT NOT NULL,
+  id TEXT NOT NULL,
+  members TEXT NOT NULL,
+  posts TEXT NOT NULL
+  );
+    `);
 
 async function register(user, password) {
   try {
@@ -47,8 +57,16 @@ async function register(user, password) {
       const uuid = crypto.randomUUID();
       const token = crypto.randomUUID();
       db.exec(
-        "INSERT INTO users (name, permissions, password, uid, joined, token) VALUES (?, ?, ?, ?, ?, ?)",
-        [user, "user", hashed, uuid, Math.floor(new Date().getTime() / 1000), token],
+        "INSERT INTO users (name, display_name, permissions, password, uid, joined, token) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+          user,
+          user,
+          "user",
+          hashed,
+          uuid,
+          Date.now(),
+          token,
+        ],
       );
       const respbody = JSON.stringify({ message: "Registered successfully" });
       return new Response(respbody, {
@@ -74,20 +92,15 @@ async function register(user, password) {
 async function auth(user, password) {
   try {
     if (user && password) {
-      console.log('Attempting auth for user:', user);
-      const query = "SELECT name, password, token FROM users WHERE LOWER(name) = LOWER(?)";
-      console.log('Executing query:', query, [user.toLowerCase()]);
+      const query =
+        "SELECT name, password, token FROM users WHERE LOWER(name) = LOWER(?)";
 
       const stmt = db.prepare(query);
       const results = stmt.all(user.toLowerCase());
 
-      console.log('DB results:', JSON.stringify(results, null, 2));
-
       if (Array.isArray(results) && results.length > 0) {
         const check = results[0];
-        console.log('Found user, verifying password');
         const isValid = await verify(password, check.password);
-        console.log('Password verification result:', isValid);
 
         if (isValid) {
           clients.set(check.token, JSON.stringify({ auth: true }));
@@ -101,7 +114,6 @@ async function auth(user, password) {
           });
         }
       }
-      console.log('Authentication failed');
       const respbody = JSON.stringify({ message: "Incorrect credentials" });
       return new Response(respbody, {
         status: 403,
@@ -115,20 +127,18 @@ async function auth(user, password) {
       });
     }
   } catch (e) {
-    console.error('Auth error:', e);
+    console.error("Auth error:", e);
     return new Response(JSON.stringify({ message: "Internal Server Error" }), {
       status: 500,
       headers: CORS_HEADERS,
     });
   }
 }
-async function post(content, token) {
+async function post(guild, content, token) {
   try {
     const authCheck = clients.get(token);
-    console.log('Auth check result:', authCheck);
-    
+
     if (!authCheck) {
-      console.log('Auth check failed');
       return new Response(JSON.stringify({ message: "Unauthorized" }), {
         status: 403,
         headers: CORS_HEADERS,
@@ -144,47 +154,191 @@ async function post(content, token) {
         headers: CORS_HEADERS,
       });
     }
+    if (guild === "home") {
+      db.exec(
+        "INSERT INTO posts (p, u, id, ts) VALUES (?, ?, ?, ?)",
+        [content, user.name, crypto.randomUUID(), Date.now()],
+      );
+      return new Response(JSON.stringify({ message: "Posted successfully" }), {
+        status: 200,
+        headers: CORS_HEADERS,
+      });
+    } else {
+      const communityStmt = db.prepare(
+        "SELECT * FROM communities WHERE name = ?",
+      );
+      const community = communityStmt.get(guild);
 
-    db.exec(
-      "INSERT INTO posts (p, u, id, ts) VALUES (?, ?, ?, ?)",
-      [content, user.name, crypto.randomUUID(), Date.now()]
-    );
+      if (!community) {
+        return new Response(
+          JSON.stringify({ message: "Community not found" }),
+          {
+            status: 404,
+            headers: CORS_HEADERS,
+          },
+        );
+      } else {
+        const checkStmt = db.prepare(
+          "SELECT * FROM communities WHERE members = ?",
+        );
+        const state = communityStmt.get(user);
+        if (!state) {
+          return new Response(
+            JSON.stringify({ message: "User not in community" }),
+            {
+              status: 403,
+              headers: CORS_HEADERS,
+            },
+          );
+        }
+        try {
+          const community = communityStmt.get(guild);
+          const currentPosts = JSON.parse(community.posts || '[]');
+          currentPosts.push({
+            ts: Date.now(),
+            id: crypto.randomUUID(),
+            u: user.name,
+            p: content,
+          });
+          db.exec(
+            "UPDATE communities SET posts = ? WHERE name = ?",
+            [
+              JSON.stringify(currentPosts),
+              guild,
+            ],
+          );
 
-    return new Response(JSON.stringify({ message: "Posted successfully" }), {
-      status: 200,
-      headers: CORS_HEADERS,
-    });
+          return new Response(
+            JSON.stringify({ message: "Posted successfully" }),
+            {
+              status: 200,
+              headers: CORS_HEADERS,
+            },
+          );
+        } catch (e) {
+          console.error(e);
+          return new Response(
+            JSON.stringify({ message: "Internal Server Error" }),
+            {
+              status: 500,
+              headers: CORS_HEADERS,
+            },
+          );
+        }
+      }
+    }
   } catch (e) {
-    console.error('Post error:', e);
+    console.error("Post error:", e);
     return new Response(JSON.stringify({ message: "Internal Server Error" }), {
       status: 500,
       headers: CORS_HEADERS,
     });
   }
 }
-async function fetch(offset) {
-  try {
-    const stmt = db.prepare("SELECT * FROM posts ORDER BY ts DESC LIMIT 10 OFFSET ?");
-    const posts = stmt.all(offset || 0);
-    
-    return new Response(JSON.stringify({ posts }), {
+async function createCommunity(name, token) {
+  const stmt = db.prepare("SELECT name FROM users WHERE token = ?");
+  const user = stmt.get(token);
+
+  if (!user) {
+    return new Response(JSON.stringify({ message: "Invalid token" }), {
+      status: 404,
+      headers: CORS_HEADERS,
+    });
+  } else {
+    db.exec(
+      "INSERT INTO communities (created, name, id, members) VALUES (?, ?, ?, ?)",
+      [Date.now(), name, crypto.randomUUID(), user],
+    );
+    return new Response(JSON.stringify({ message: "Created successfully" }), {
       status: 200,
       headers: CORS_HEADERS,
     });
-  } catch (e) {
-    console.log("Fetch failed:", e)
+  }
+}
+async function joinCommunity(name, token) {
+  const communityStmt = db.prepare(
+    "SELECT * FROM communities WHERE name = ?",
+  );
+  const community = communityStmt.get(guild);
+
+  if (!community) {
+    return new Response(
+      JSON.stringify({ message: "Community not found" }),
+      {
+        status: 404,
+        headers: CORS_HEADERS,
+      },
+    );
+  } else {
+    db.exec(
+      "INSERT INTO communities (members) VALUES (?)",
+      [user],
+    );
+    return new Response(
+      JSON.stringify({ message: "Joined successfully" }),
+      {
+        status: 200,
+        headers: CORS_HEADERS,
+      },
+    );
+  }
+}
+async function fetch(guild, offset) {
+  if (guild === "home") {
+    try {
+      const stmt = db.prepare(
+        "SELECT * FROM posts ORDER BY ts DESC LIMIT 10 OFFSET ?",
+      );
+      const posts = stmt.all(offset || 0);
+
+      return new Response(JSON.stringify({ posts: posts }), {
+        status: 200,
+        headers: CORS_HEADERS,
+      });
+    } catch (e) {
+      console.log("Fetch failed:", e);
+    }
+  } else {
+    const communityStmt = db.prepare(
+      "SELECT * FROM communities WHERE name = ?",
+    );
+    const community = communityStmt.get(guild);
+
+    if (!community) {
+      return new Response(
+        JSON.stringify({ message: "Community not found" }),
+        {
+          status: 404,
+          headers: CORS_HEADERS,
+        },
+      );
+    } else {
+      const fetchStmt = db.prepare(
+        "SELECT posts FROM communities WHERE name = ?",
+      );
+      const fetch = fetchStmt.get(guild);
+      const posts = JSON.parse(fetch.posts || '[]');
+      const slicedPosts = posts.slice(offset || 0, (offset || 0) + 10);
+      return new Response(
+        JSON.stringify({ posts: slicedPosts }),
+        {
+          status: 200,
+          headers: CORS_HEADERS,
+        }
+      );
+    }
   }
 }
 Deno.serve({
   port: 4040,
   onListen() {
     console.log(
-      "CODENAME SIMPLESAMPLE || alpha 2 || running on localhost:4040",
+      `maelink gen2 server / codename simplesample
+running on localhost:4040`,
     );
   },
 }, async (req) => {
   if (req.method === "OPTIONS") {
-    // Respond to preflight requests
     return new Response(null, { headers: CORS_HEADERS });
   }
   let requestBody;
@@ -216,6 +370,8 @@ Deno.serve({
   let authResult;
   let postResult;
   let fetchResult;
+  let createResult;
+  let joinResult;
 
   switch (requestBody?.type) {
     case "reg": {
@@ -227,12 +383,24 @@ Deno.serve({
       return authResult;
     }
     case "post": {
-      postResult = await post(requestBody.p, requestBody.token);
+      postResult = await post(
+        requestBody.community,
+        requestBody.p,
+        requestBody.token,
+      );
       return postResult;
     }
     case "fetch": {
-      fetchResult = await fetch(requestBody.offset);
+      fetchResult = await fetch(requestBody.community, requestBody.offset);
       return fetchResult;
+    }
+    case "communityCreate": {
+      createResult = await createCommunity(requestBody.name, requestBody.token);
+      return createResult;
+    }
+    case "communityJoin": {
+      joinResult = await joinCommunity(requestBody.name, requestBody.token);
+      return joinResult;
     }
     default: {
       const body = JSON.stringify({ message: "NOT FOUND" });
