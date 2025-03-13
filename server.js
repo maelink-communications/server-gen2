@@ -259,7 +259,7 @@ async function joinCommunity(name, token) {
   const communityStmt = db.prepare(
     "SELECT * FROM communities WHERE name = ?",
   );
-  const community = communityStmt.get(guild);
+  const community = communityStmt.get(name);
 
   if (!community) {
     return new Response(
