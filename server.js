@@ -269,15 +269,43 @@ async function joinCommunity(name, token) {
         headers: CORS_HEADERS,
       },
     );
-  } else {
-    db.exec(
-      "INSERT INTO communities (members) VALUES (?)",
-      [user],
+  }
+
+  const userStmt = db.prepare("SELECT name FROM users WHERE token = ?");
+  const user = userStmt.get(token);
+
+  if (!user) {
+    return new Response(
+      JSON.stringify({ message: "User not found" }),
+      {
+        status: 404,
+        headers: CORS_HEADERS,
+      },
     );
+  }
+
+  try {
+    const currentMembers = JSON.parse(community.members || '[]');
+    if (!currentMembers.includes(user.name)) {
+      currentMembers.push(user.name);
+      db.exec(
+        "UPDATE communities SET members = ? WHERE name = ?",
+        [JSON.stringify(currentMembers), name]
+      );
+    }
+
     return new Response(
       JSON.stringify({ message: "Joined successfully" }),
       {
         status: 200,
+        headers: CORS_HEADERS,
+      },
+    );
+  } catch (e) {
+    return new Response(
+      JSON.stringify({ message: "Internal Server Error" }),
+      {
+        status: 500,
         headers: CORS_HEADERS,
       },
     );
