@@ -39,9 +39,9 @@ db.exec(`
   );
     `);
 
-async function register(user, password) {
+async function register(user, password, code) {
   try {
-    if (user && password) {
+    if (user && password && code) {
       const existingUser = db.exec("SELECT name FROM users WHERE name = ?", [
         user,
       ]);
@@ -49,6 +49,17 @@ async function register(user, password) {
         const body = JSON.stringify({ message: "User already exists" });
         return new Response(body, {
           status: 409,
+          headers: CORS_HEADERS,
+        });
+      }
+
+      const codeCheck = db.exec("SELECT id FROM codes WHERE id = ?", [
+        code,
+      ]);
+      if (codeCheck.length === 0) {
+        const body = JSON.stringify({ message: "Code is invalid" });
+        return new Response(body, {
+          status: 403,
           headers: CORS_HEADERS,
         });
       }
@@ -68,7 +79,11 @@ async function register(user, password) {
           token,
         ],
       );
-      const respbody = JSON.stringify({ message: "Registered successfully", payload: { token } });
+      db.exec("DELETE FROM codes WHERE id = ?", [code]);
+      const respbody = JSON.stringify({
+        message: "Registered successfully",
+        payload: { token },
+      });
       return new Response(respbody, {
         status: 200,
         headers: CORS_HEADERS,
@@ -194,7 +209,7 @@ async function post(guild, content, token) {
         }
         try {
           const community = communityStmt.get(guild);
-          const currentPosts = JSON.parse(community.posts || '[]');
+          const currentPosts = JSON.parse(community.posts || "[]");
           currentPosts.push({
             ts: Date.now(),
             id: crypto.randomUUID(),
@@ -248,7 +263,13 @@ async function createCommunity(name, token) {
   } else {
     db.exec(
       "INSERT INTO communities (created, name, id, members, posts) VALUES (?, ?, ?, ?, ?)",
-      [Date.now(), name, crypto.randomUUID(), JSON.stringify([user.name]), "[]"],
+      [
+        Date.now(),
+        name,
+        crypto.randomUUID(),
+        JSON.stringify([user.name]),
+        "[]",
+      ],
     );
     return new Response(JSON.stringify({ message: "Created successfully" }), {
       status: 200,
@@ -286,12 +307,12 @@ async function joinCommunity(name, token) {
   }
 
   try {
-    const currentMembers = JSON.parse(community.members || '[]');
+    const currentMembers = JSON.parse(community.members || "[]");
     if (!currentMembers.includes(user.name)) {
       currentMembers.push(user.name);
       db.exec(
         "UPDATE communities SET members = ? WHERE name = ?",
-        [JSON.stringify(currentMembers), name]
+        [JSON.stringify(currentMembers), name],
       );
     }
 
@@ -346,14 +367,14 @@ async function fetch(guild, offset) {
         "SELECT posts FROM communities WHERE name = ?",
       );
       const fetch = fetchStmt.get(guild);
-      const posts = JSON.parse(fetch.posts || '[]');
+      const posts = JSON.parse(fetch.posts || "[]");
       const slicedPosts = posts.slice(offset || 0, (offset || 0) + 10);
       return new Response(
         JSON.stringify({ posts: slicedPosts }),
         {
           status: 200,
           headers: CORS_HEADERS,
-        }
+        },
       );
     }
   }
@@ -372,18 +393,18 @@ async function fetchCommunities(token) {
 
     const communitiesStmt = db.prepare("SELECT * FROM communities");
     const allCommunities = communitiesStmt.all();
-    console.log(allCommunities)
-    
-    const userCommunities = allCommunities.filter(community => {
+    console.log(allCommunities);
+
+    const userCommunities = allCommunities.filter((community) => {
       try {
         const members = JSON.parse(community.members);
-        console.log(members)
+        console.log(members);
         return Array.isArray(members) && members.includes(user.name);
       } catch (e) {
         return false;
       }
     });
-    console.log(userCommunities)
+    console.log(userCommunities);
 
     return new Response(JSON.stringify({ communities: userCommunities }), {
       status: 200,
@@ -444,7 +465,7 @@ running on localhost:4040`,
 
   switch (requestBody?.type) {
     case "reg": {
-      regResult = await register(requestBody.user, requestBody.password);
+      regResult = await register(requestBody.user, requestBody.password, requestBody.code);
       return regResult;
     }
     case "auth": {
