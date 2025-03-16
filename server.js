@@ -17,12 +17,12 @@ db.exec(`
   password TEXT NOT NULL,
   token TEXT NOT NULL,
   uid TEXT NOT NULL,
-  joined INTEGER NOT NULL
+  joined TEXT NOT NULL
   );
   `);
 db.exec(`
   CREATE TABLE IF NOT EXISTS posts (
-  ts INTEGER PRIMARY KEY NOT NULL,
+  ts TEXT PRIMARY KEY NOT NULL,
   u TEXT NOT NULL,
   id TEXT NOT NULL,
   p TEXT NOT NULL
@@ -30,7 +30,7 @@ db.exec(`
   `);
 db.exec(`
   CREATE TABLE IF NOT EXISTS communities (
-  created INTEGER PRIMARY KEY NOT NULL,
+  created TEXT PRIMARY KEY NOT NULL,
   name TEXT NOT NULL,
   id TEXT NOT NULL,
   members TEXT NOT NULL,
@@ -66,6 +66,7 @@ async function register(user, password, code) {
       const hashed = await hash(password);
       const uuid = crypto.randomUUID();
       const token = crypto.randomUUID();
+      const now = Date.now().toString();
       db.exec(
         "INSERT INTO users (name, display_name, permissions, password, uid, joined, token) VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
@@ -74,7 +75,7 @@ async function register(user, password, code) {
           "user",
           hashed,
           uuid,
-          Date.now(),
+          now,
           token,
         ],
       );
@@ -170,9 +171,10 @@ async function post(guild, content, token) {
       });
     }
     if (guild === "home") {
+      const now = Date.now().toString();
       db.exec(
         "INSERT INTO posts (p, u, id, ts) VALUES (?, ?, ?, ?)",
-        [content, user.name, crypto.randomUUID(), Date.now().toString()],
+        [content, user.name, crypto.randomUUID(), now],
       );
       return new Response(JSON.stringify({ message: "Posted successfully" }), {
         status: 200,
@@ -196,7 +198,7 @@ async function post(guild, content, token) {
         const checkStmt = db.prepare(
           "SELECT * FROM communities WHERE members = ?",
         );
-        const state = communityStmt.get(user);
+        const state = checkStmt.get(user);
         if (!state) {
           return new Response(
             JSON.stringify({ message: "User not in community" }),
@@ -209,8 +211,9 @@ async function post(guild, content, token) {
         try {
           const community = communityStmt.get(guild);
           const currentPosts = JSON.parse(community.posts || "[]");
+          const now = Date.now().toString();
           currentPosts.push({
-            ts: Date.now().toString(),
+            ts: now,
             id: crypto.randomUUID(),
             u: user.name,
             p: content,
