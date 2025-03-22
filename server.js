@@ -17,12 +17,12 @@ db.exec(`
   password TEXT NOT NULL,
   token TEXT NOT NULL,
   uid TEXT NOT NULL,
-  joined INTEGER NOT NULL
+  joined TEXT NOT NULL
   );
   `);
 db.exec(`
   CREATE TABLE IF NOT EXISTS posts (
-  ts INTEGER PRIMARY KEY NOT NULL,
+  ts TEXT PRIMARY KEY NOT NULL,
   u TEXT NOT NULL,
   id TEXT NOT NULL,
   p TEXT NOT NULL
@@ -30,7 +30,7 @@ db.exec(`
   `);
 db.exec(`
   CREATE TABLE IF NOT EXISTS communities (
-  created INTEGER PRIMARY KEY NOT NULL,
+  created TEXT PRIMARY KEY NOT NULL,
   name TEXT NOT NULL,
   id TEXT NOT NULL,
   members TEXT NOT NULL,
@@ -55,7 +55,7 @@ async function register(user, password, code) {
       const codeCheck = db.exec("SELECT id FROM codes WHERE id = ?", [
         code,
       ]);
-      if (codeCheck.length === 0) {
+      if (codeCheck === 0) {
         const body = JSON.stringify({ message: "Code is invalid" });
         return new Response(body, {
           status: 403,
@@ -66,6 +66,7 @@ async function register(user, password, code) {
       const hashed = await hash(password);
       const uuid = crypto.randomUUID();
       const token = crypto.randomUUID();
+      const now = Date.now().toString();
       db.exec(
         "INSERT INTO users (name, display_name, permissions, password, uid, joined, token) VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
@@ -74,7 +75,7 @@ async function register(user, password, code) {
           "user",
           hashed,
           uuid,
-          Date.now(),
+          now,
           token,
         ],
       );
@@ -170,6 +171,7 @@ async function post(guild, content, token) {
       });
     }
     if (guild === "home") {
+      const now = Date.now().toString();
       db.exec(
         "INSERT INTO posts (p, u, id, ts) VALUES (?, ?, ?, ?)",
         [content, user.name, crypto.randomUUID(), Date.now().toString()],
@@ -196,7 +198,7 @@ async function post(guild, content, token) {
         const checkStmt = db.prepare(
           "SELECT * FROM communities WHERE members = ?",
         );
-        const state = communityStmt.get(user);
+        const state = checkStmt.get(user);
         if (!state) {
           return new Response(
             JSON.stringify({ message: "User not in community" }),
@@ -209,6 +211,7 @@ async function post(guild, content, token) {
         try {
           const community = communityStmt.get(guild);
           const currentPosts = JSON.parse(community.posts || "[]");
+          const now = Date.now().toString();
           currentPosts.push({
             ts: Date.now().toString(),
             id: crypto.randomUUID(),
@@ -274,6 +277,20 @@ async function createCommunity(name, token) {
       status: 200,
       headers: CORS_HEADERS,
     });
+  }
+}
+async function fetchIndividual(id) {
+  try {
+    const stmt = db.prepare(
+      "SELECT * FROM posts WHERE id = ?",
+    );
+    const post = stmt.all(id);
+    return new Response(post, {
+      status: 200,
+      headers: CORS_HEADERS,
+    });
+  } catch (e) {
+    console.error("Fetch failed:", e);
   }
 }
 async function joinCommunity(name, token) {
@@ -481,6 +498,10 @@ running on port 2387`,
     case "fetch": {
       fetchResult = await fetch(requestBody.community, requestBody.offset);
       return fetchResult;
+    }
+    case "fetchIndividual": {
+      fetchIndResult = await fetchIndividual(requestBody.id, requestBody.offset);
+      return fetchIndResult;
     }
     case "communityCreate": {
       createResult = await createCommunity(requestBody.name, requestBody.token);
