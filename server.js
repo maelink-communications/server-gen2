@@ -1,5 +1,4 @@
 // deno-lint-ignore-file
-
 import { Database } from "@db/sqlite";
 import { hash, verify } from "@ts-rex/bcrypt";
 const clients = new Map();
@@ -173,7 +172,7 @@ async function post(guild, content, token) {
     if (guild === "home") {
       db.exec(
         "INSERT INTO posts (p, u, id, ts) VALUES (?, ?, ?, ?)",
-        [content, user.name, crypto.randomUUID(), Date.now()],
+        [content, user.name, crypto.randomUUID(), Date.now().toString()],
       );
       return new Response(JSON.stringify({ message: "Posted successfully" }), {
         status: 200,
@@ -211,7 +210,7 @@ async function post(guild, content, token) {
           const community = communityStmt.get(guild);
           const currentPosts = JSON.parse(community.posts || "[]");
           currentPosts.push({
-            ts: Date.now(),
+            ts: Date.now().toString(),
             id: crypto.randomUUID(),
             u: user.name,
             p: content,
@@ -340,7 +339,6 @@ async function fetch(guild, offset) {
         "SELECT * FROM posts ORDER BY ts DESC LIMIT 10 OFFSET ?",
       );
       const posts = stmt.all(offset || 0);
-
       return new Response(JSON.stringify({ posts: posts }), {
         status: 200,
         headers: CORS_HEADERS,
@@ -419,11 +417,11 @@ async function fetchCommunities(token) {
   }
 }
 Deno.serve({
-  port: 4040,
+  port: 2387,
   onListen() {
     console.log(
-      `maelink gen2 server / codename simplesample
-running on localhost:4040`,
+`maelink gen2 server / codename simplesample
+running on port 2387`,
     );
   },
 }, async (req) => {
