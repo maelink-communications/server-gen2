@@ -279,6 +279,20 @@ async function createCommunity(name, token) {
     });
   }
 }
+async function fetchIndividual(id) {
+  try {
+    const stmt = db.prepare(
+      "SELECT * FROM posts WHERE id = ?",
+    );
+    const post = stmt.all(id);
+    return new Response(post, {
+      status: 200,
+      headers: CORS_HEADERS,
+    });
+  } catch (e) {
+    console.error("Fetch failed:", e);
+  }
+}
 async function joinCommunity(name, token) {
   const communityStmt = db.prepare(
     "SELECT * FROM communities WHERE name = ?",
@@ -484,6 +498,10 @@ running on port 2387`,
     case "fetch": {
       fetchResult = await fetch(requestBody.community, requestBody.offset);
       return fetchResult;
+    }
+    case "fetchIndividual": {
+      fetchIndResult = await fetchIndividual(requestBody.id, requestBody.offset);
+      return fetchIndResult;
     }
     case "communityCreate": {
       createResult = await createCommunity(requestBody.name, requestBody.token);
