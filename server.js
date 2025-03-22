@@ -55,7 +55,7 @@ async function register(user, password, code) {
       const codeCheck = db.exec("SELECT id FROM codes WHERE id = ?", [
         code,
       ]);
-      if (codeCheck.length === 0) {
+      if (codeCheck === 0) {
         const body = JSON.stringify({ message: "Code is invalid" });
         return new Response(body, {
           status: 403,
