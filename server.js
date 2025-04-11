@@ -174,7 +174,7 @@ async function post(guild, content, token) {
       const now = Date.now().toString();
       db.exec(
         "INSERT INTO posts (p, u, id, ts) VALUES (?, ?, ?, ?)",
-        [content, user.name, crypto.randomUUID(), now],
+        [content, user.name, crypto.randomUUID(), Date.now().toString()],
       );
       return new Response(JSON.stringify({ message: "Posted successfully" }), {
         status: 200,
@@ -213,7 +213,7 @@ async function post(guild, content, token) {
           const currentPosts = JSON.parse(community.posts || "[]");
           const now = Date.now().toString();
           currentPosts.push({
-            ts: now,
+            ts: Date.now().toString(),
             id: crypto.randomUUID(),
             u: user.name,
             p: content,
