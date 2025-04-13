@@ -290,16 +290,18 @@ async function createCommunity(name, token) {
 }
 async function fetchIndividual(id) {
   try {
-    const stmt = db.prepare(
-      "SELECT * FROM posts WHERE id = ?",
-    );
+    const stmt = db.prepare("SELECT * FROM posts WHERE id = ?");
     const post = stmt.all(id);
-    return new Response(post, {
+    return new Response(JSON.stringify(post), {
       status: 200,
       headers: CORS_HEADERS,
     });
   } catch (e) {
     console.error("Fetch failed:", e);
+    return new Response(JSON.stringify({ message: "Internal Server Error" }), {
+      status: 500,
+      headers: CORS_HEADERS,
+    });
   }
 }
 async function joinCommunity(name, token) {
@@ -485,6 +487,7 @@ console.log(chalk.blue.bold(`Running on port 2387`));
   let createResult;
   let joinResult;
   let comfetchResult;
+  let fetchIndResult;
 
   switch (requestBody?.type) {
     case "reg": {
@@ -508,7 +511,7 @@ console.log(chalk.blue.bold(`Running on port 2387`));
       return fetchResult;
     }
     case "fetchIndividual": {
-      fetchIndResult = await fetchIndividual(requestBody.id, requestBody.offset);
+      fetchIndResult = await fetchIndividual(requestBody.id);
       return fetchIndResult;
     }
     case "communityCreate": {
