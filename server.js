@@ -1,8 +1,9 @@
 // deno-lint-ignore-file
 import { Database } from "@db/sqlite";
 import { hash, verify } from "@ts-rex/bcrypt";
+import chalk from "npm:chalk";
 const clients = new Map();
-const db = new Database("test.db");
+const db = new Database("main.db");
 const CORS_HEADERS = {
   "Content-Type": "application/json",
   "Access-Control-Allow-Origin": "*",
@@ -36,8 +37,16 @@ db.exec(`
   members TEXT NOT NULL,
   posts TEXT NOT NULL
   );
-    `);
-
+`);
+async function deleteInvalidUsers() {
+  try {
+      db.exec("DELETE FROM users WHERE name NOT GLOB '[A-Za-z0-9_]*'");
+      console.log(chalk.green("[Truncated invalid users successfully!]"));
+  } catch (error) {
+    console.log(chalk.red.bold(`[Error deleting invalid users: ${error}]`));
+  }
+}
+deleteInvalidUsers();
 async function register(user, password, code) {
   try {
     if (user && password && code) {
@@ -52,10 +61,10 @@ async function register(user, password, code) {
         });
       }
 
-      const codeCheck = db.exec("SELECT id FROM codes WHERE id = ?", [
+      const codeCheck = db.exec("SELECT id FROM codes WHERE id = '?'", [
         code,
       ]);
-      if (codeCheck.length === 0) {
+      if (codeCheck.length === 0 || /^\d+$/.test(code)) {
         const body = JSON.stringify({ message: "Code is invalid" });
         return new Response(body, {
           status: 403,
@@ -436,10 +445,9 @@ async function fetchCommunities(token) {
 Deno.serve({
   port: 2387,
   onListen() {
-    console.log(
-`maelink gen2 server / codename simplesample
-running on port 2387`,
-    );
+    console.log(chalk.red.bold(
+`maelink gen2 server`));
+console.log(chalk.blue.bold(`Running on port 2387`));
   },
 }, async (req) => {
   if (req.method === "OPTIONS") {

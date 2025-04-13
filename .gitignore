@@ -3,3 +3,4 @@ client.js
 *.db-shm
 *.db-wal
 codegen.js
+regtest.js
