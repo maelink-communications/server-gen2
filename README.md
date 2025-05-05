@@ -2,7 +2,7 @@
 
 This is the WIP backend server for ***maelink gen2.***
 
-Developers, please contribute to this (I really need help... PRs and bug reports appreciated)
+Please contribute to this (I really need help... PRs and bug reports appreciated)
 
 > [!WARNING]
 > Bugs, glitches and unstable releases galore!

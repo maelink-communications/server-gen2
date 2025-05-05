@@ -1,9 +1,29 @@
 // deno-lint-ignore-file
+const startTime = performance.now();
+const logs = [];
+function printStatusLines() {
+  console.log(chalk.grey.dim("maelink gen2 server (Open source alpha)"));
+  console.log(chalk.grey.dim(`Current version: QOL update + Guilds rewrite (simplesample-foss-alpha_qol-guilds//030525)`));
+}
+function log(content) {
+  const elapsed = ((performance.now() - startTime) / 1000).toFixed(3);
+  logs.push(`${chalk.grey(`[${elapsed}s]`)} ${content}`);
+  console.clear();
+  for (const line of logs) {
+    console.log(line);
+  }
+  printStatusLines();
+}
+log(chalk.red.bold(
+  `Initializing server...`,
+));
 import { Database } from "@db/sqlite";
 import { hash, verify } from "@ts-rex/bcrypt";
 import chalk from "npm:chalk";
 const clients = new Map();
+log(chalk.grey("Client map created"));
 const db = new Database("main.db");
+log(chalk.grey("Connected to DB!"));
 const CORS_HEADERS = {
   "Content-Type": "application/json",
   "Access-Control-Allow-Origin": "*",
@@ -14,11 +34,14 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS users (
   name TEXT PRIMARY KEY NOT NULL,
   display_name TEXT NOT NULL,
-  permissions TEXT NOT NULL,
+  badges TEXT NOT NULL,
+  joined TEXT NOT NULL,
   password TEXT NOT NULL,
+  permissions TEXT NOT NULL,
   token TEXT NOT NULL,
+  timezone TEXT NOT NULL,
   uid TEXT NOT NULL,
-  joined TEXT NOT NULL
+  salt TEXT NOT NULL
   );
   `);
 db.exec(`
@@ -30,27 +53,39 @@ db.exec(`
   );
   `);
 db.exec(`
-  CREATE TABLE IF NOT EXISTS communities (
+  CREATE TABLE IF NOT EXISTS guilds (
   created TEXT PRIMARY KEY NOT NULL,
   name TEXT NOT NULL,
+  code TEXT NOT NULL,
+  emojis TEXT NOT NULL,
+  icon TEXT NOT NULL,
   id TEXT NOT NULL,
   members TEXT NOT NULL,
-  posts TEXT NOT NULL
+  visibility TEXT NOT NULL
   );
 `);
 async function deleteInvalidUsers() {
   try {
-      db.exec("DELETE FROM users WHERE name NOT GLOB '[A-Za-z0-9_]*'");
-      console.log(chalk.green("[Truncated invalid users successfully!]"));
+    const stmt = db.prepare(
+      "SELECT name FROM users WHERE name LIKE '%[^A-Za-z0-9_]%' OR name GLOB '*[^A-Za-z0-9_]*'",
+    );
+    const invalidUsers = stmt.all();
+    invalidUsers.forEach((user) => {
+      db.exec("DELETE FROM posts WHERE u = ?", [user.name]);
+    });
+    db.exec(
+      "DELETE FROM users WHERE name LIKE '%[^A-Za-z0-9_]%' OR name GLOB '*[^A-Za-z0-9_]*'",
+    );
+    log(chalk.grey("Successfully truncated invalid users and posts"));
   } catch (error) {
-    console.log(chalk.red.bold(`[Error deleting invalid users: ${error}]`));
+    log(chalk.red.bold(`Error deleting invalid users: ${error}`));
   }
 }
 deleteInvalidUsers();
-async function register(user, password, code) {
+async function register(user, password) {
   try {
-    if (user && password && code) {
-      const existingUser = db.exec("SELECT name FROM users WHERE name = ?", [
+    if (user && password) {
+      const existingUser = db.exec("SELECT name FROM users WHERE name = '?'", [
         user,
       ]);
       if (existingUser.length > 0) {
@@ -61,40 +96,42 @@ async function register(user, password, code) {
         });
       }
 
-      const codeCheck = db.exec("SELECT id FROM codes WHERE id = '?'", [
-        code,
-      ]);
-      if (codeCheck.length === 0 || /^\d+$/.test(code)) {
-        const body = JSON.stringify({ message: "Code is invalid" });
+      if (user.match(/[^A-Za-z0-9_]/)) {
+        const body = JSON.stringify({
+          message:
+            "Username can only contain letters, numbers, and underscores",
+        });
         return new Response(body, {
-          status: 403,
+          status: 400,
           headers: CORS_HEADERS,
         });
       }
-
-      const hashed = await hash(password);
+      const time = new Date();
       const uuid = crypto.randomUUID();
-      const token = crypto.randomUUID();
-      const now = Date.now().toString();
+      const salt = await hash(crypto.randomUUID());
+      const hashed = await hash(password.concat("", salt));
+      const token = hash(user.concat("", Date.now().toString()));
       db.exec(
-        "INSERT INTO users (name, display_name, permissions, password, uid, joined, token) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO users (name, display_name, badges, joined, password, permissions, token, timezone, uid, salt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           user,
           user,
-          "user",
+          "['user']",
+          time.getTime(), // .toLocaleString()
           hashed,
-          uuid,
-          now,
+          "[]",
           token,
+          "UTC+0.00",
+          uuid,
+          salt,
         ],
       );
-      db.exec("DELETE FROM codes WHERE id = ?", [code]);
       const respbody = JSON.stringify({
         message: "Registered successfully",
         payload: { token },
       });
       return new Response(respbody, {
-        status: 200,
+        status: 201,
         headers: CORS_HEADERS,
       });
     } else {
@@ -117,14 +154,16 @@ async function auth(user, password) {
   try {
     if (user && password) {
       const query =
-        "SELECT name, password, token FROM users WHERE LOWER(name) = LOWER(?)";
+        "SELECT name, joined, password, salt, token FROM users WHERE LOWER(name) = LOWER(?)";
 
       const stmt = db.prepare(query);
       const results = stmt.all(user.toLowerCase());
-
       if (Array.isArray(results) && results.length > 0) {
         const check = results[0];
-        const isValid = await verify(password, check.password);
+        const isValid = await verify(
+          password.concat("", check.salt),
+          check.password,
+        );
 
         if (isValid) {
           clients.set(check.token, JSON.stringify({ auth: true }));
@@ -140,7 +179,7 @@ async function auth(user, password) {
       }
       const respbody = JSON.stringify({ message: "Incorrect credentials" });
       return new Response(respbody, {
-        status: 403,
+        status: 401,
         headers: CORS_HEADERS,
       });
     } else {
@@ -158,7 +197,7 @@ async function auth(user, password) {
     });
   }
 }
-async function post(guild, content, token) {
+async function post(content, token) {
   try {
     const userStmt = db.prepare("SELECT name FROM users WHERE token = ?");
     const authCheck = userStmt.get(token);
@@ -179,80 +218,20 @@ async function post(guild, content, token) {
         headers: CORS_HEADERS,
       });
     }
-    if (guild === "home") {
-      const now = Date.now().toString();
+    if (content.length() < 256) {
       db.exec(
-        "INSERT INTO posts (p, u, id, ts) VALUES (?, ?, ?, ?)",
-        [content, user.name, crypto.randomUUID(), Date.now().toString()],
+        "INSERT INTO posts (ts, u, p, id) VALUES (?, ?, ?, ?)",
+        [Date.now().toString(), user.name, content, crypto.randomUUID()],
       );
       return new Response(JSON.stringify({ message: "Posted successfully" }), {
-        status: 200,
+        status: 201,
         headers: CORS_HEADERS,
       });
     } else {
-      const communityStmt = db.prepare(
-        "SELECT * FROM communities WHERE name = ?",
-      );
-      const community = communityStmt.get(guild);
-
-      if (!community) {
-        return new Response(
-          JSON.stringify({ message: "Community not found" }),
-          {
-            status: 404,
-            headers: CORS_HEADERS,
-          },
-        );
-      } else {
-        const checkStmt = db.prepare(
-          "SELECT * FROM communities WHERE members = ?",
-        );
-        const state = checkStmt.get(user);
-        if (!state) {
-          return new Response(
-            JSON.stringify({ message: "User not in community" }),
-            {
-              status: 403,
-              headers: CORS_HEADERS,
-            },
-          );
-        }
-        try {
-          const community = communityStmt.get(guild);
-          const currentPosts = JSON.parse(community.posts || "[]");
-          const now = Date.now().toString();
-          currentPosts.push({
-            ts: Date.now().toString(),
-            id: crypto.randomUUID(),
-            u: user.name,
-            p: content,
-          });
-          db.exec(
-            "UPDATE communities SET posts = ? WHERE name = ?",
-            [
-              JSON.stringify(currentPosts),
-              guild,
-            ],
-          );
-
-          return new Response(
-            JSON.stringify({ message: "Posted successfully" }),
-            {
-              status: 200,
-              headers: CORS_HEADERS,
-            },
-          );
-        } catch (e) {
-          console.error(e);
-          return new Response(
-            JSON.stringify({ message: "Internal Server Error" }),
-            {
-              status: 500,
-              headers: CORS_HEADERS,
-            },
-          );
-        }
-      }
+      return new Response(JSON.stringify({ message: "Message is too long" }), {
+        status: 403,
+        headers: CORS_HEADERS,
+      });
     }
   } catch (e) {
     console.error("Post error:", e);
@@ -262,28 +241,68 @@ async function post(guild, content, token) {
     });
   }
 }
-async function createCommunity(name, token) {
+async function createCommunity(name, token, visibility, code) {
   const stmt = db.prepare("SELECT name FROM users WHERE token = ?");
   const user = stmt.get(token);
 
   if (!user) {
     return new Response(JSON.stringify({ message: "Invalid token" }), {
-      status: 404,
+      status: 403,
       headers: CORS_HEADERS,
     });
   } else {
-    db.exec(
-      "INSERT INTO communities (created, name, id, members, posts) VALUES (?, ?, ?, ?, ?)",
-      [
-        Date.now(),
-        name,
-        crypto.randomUUID(),
-        JSON.stringify([user.name]),
-        "[]",
-      ],
+    if (!name || !visibility) {
+      return new Response(JSON.stringify({ message: "Missing parameters" }), {
+        status: 422,
+        headers: CORS_HEADERS,
+      });
+    }
+
+    if (visibility == "inviteonly" && !code) {
+      return new Response(
+        JSON.stringify({
+          message: "Invite code needed for invite-only Bubbles",
+        }),
+        {
+          status: 403,
+          headers: CORS_HEADERS,
+        },
+      );
+    }
+    if (
+      visibility == "inviteonly" &&
+      !code.match(/[a-z]{1,8}-[a-z]{1,11}-\d{3}(-[0-9a-f]+)*/)
+    ) {
+      return new Response(
+        JSON.stringify({ message: "Incorrect invite code format" }),
+        {
+          status: 400,
+          headers: CORS_HEADERS,
+        },
+      );
+    }
+    const insertStmt = db.prepare(
+      "INSERT INTO guilds (created, name, code, emojis, icon, id, visibility) VALUES (?, ?, ?, ?, ?, ?, ?)",
     );
+    insertStmt.run(
+      Date.now(),
+      name,
+      code,
+      "[]",
+      "static/defaultbubble.svg",
+      crypto.randomUUID(),
+      JSON.stringify([user.name]),
+      visibility,
+    );
+    const tableName = name.replace(/[^a-zA-Z0-9_]/g, "");
+    db.exec(`
+    CREATE TABLE IF NOT EXISTS ${tableName} (
+      posts TEXT NOT NULL,
+      members TEXT NOT NULL
+    );
+    `);
     return new Response(JSON.stringify({ message: "Created successfully" }), {
-      status: 200,
+      status: 201,
       headers: CORS_HEADERS,
     });
   }
@@ -304,17 +323,38 @@ async function fetchIndividual(id) {
     });
   }
 }
-async function joinCommunity(name, token) {
+async function joinCommunity(name, token, invite) {
   const communityStmt = db.prepare(
-    "SELECT * FROM communities WHERE name = ?",
+    "SELECT * FROM guilds WHERE name = ?",
   );
   const community = communityStmt.get(name);
 
   if (!community) {
     return new Response(
-      JSON.stringify({ message: "Community not found" }),
+      JSON.stringify({ message: "Bubble not found" }),
       {
         status: 404,
+        headers: CORS_HEADERS,
+      },
+    );
+  }
+  if (!invite && community.visibility == "inviteonly") {
+    return new Response(
+      JSON.stringify({
+        message: "Invite code required for invite-only bubbles",
+      }),
+      {
+        status: 403,
+        headers: CORS_HEADERS,
+      },
+    );
+  }
+
+  if (invite != community.code && community.visibility == "inviteonly") {
+    return new Response(
+      JSON.stringify({ message: "Incorrect invite code" }),
+      {
+        status: 403,
         headers: CORS_HEADERS,
       },
     );
@@ -338,7 +378,7 @@ async function joinCommunity(name, token) {
     if (!currentMembers.includes(user.name)) {
       currentMembers.push(user.name);
       db.exec(
-        "UPDATE communities SET members = ? WHERE name = ?",
+        "UPDATE guilds SET members = ? WHERE name = ?",
         [JSON.stringify(currentMembers), name],
       );
     }
@@ -364,7 +404,7 @@ async function fetch(guild, offset) {
   if (guild === "home") {
     try {
       const stmt = db.prepare(
-        "SELECT * FROM posts ORDER BY ts DESC LIMIT 10 OFFSET ?",
+        "SELECT * FROM posts ORDER BY ts DESC LIMIT 15 OFFSET ?",
       );
       const posts = stmt.all(offset || 0);
       return new Response(JSON.stringify({ posts: posts }), {
@@ -372,17 +412,17 @@ async function fetch(guild, offset) {
         headers: CORS_HEADERS,
       });
     } catch (e) {
-      console.log("Fetch failed:", e);
+      log("Fetch failed:", e);
     }
   } else {
     const communityStmt = db.prepare(
-      "SELECT * FROM communities WHERE name = ?",
+      "SELECT * FROM guilds WHERE name = ?",
     );
     const community = communityStmt.get(guild);
 
     if (!community) {
       return new Response(
-        JSON.stringify({ message: "Community not found" }),
+        JSON.stringify({ message: "Bubble not found" }),
         {
           status: 404,
           headers: CORS_HEADERS,
@@ -390,11 +430,11 @@ async function fetch(guild, offset) {
       );
     } else {
       const fetchStmt = db.prepare(
-        "SELECT posts FROM communities WHERE name = ?",
+        "SELECT posts FROM guilds WHERE name = ?",
       );
       const fetch = fetchStmt.get(guild);
       const posts = JSON.parse(fetch.posts || "[]");
-      const slicedPosts = posts.slice(offset || 0, (offset || 0) + 10);
+      const slicedPosts = posts.slice(offset || 0, (offset || 0) + 15);
       return new Response(
         JSON.stringify({ posts: slicedPosts }),
         {
@@ -417,20 +457,60 @@ async function fetchCommunities(token) {
       });
     }
 
-    const communitiesStmt = db.prepare("SELECT * FROM communities");
+    const communitiesStmt = db.prepare("SELECT * FROM guilds");
     const allCommunities = communitiesStmt.all();
-    console.log(allCommunities);
+    log(allCommunities);
 
     const userCommunities = allCommunities.filter((community) => {
       try {
         const members = JSON.parse(community.members);
-        console.log(members);
+        log(members);
         return Array.isArray(members) && members.includes(user.name);
       } catch (e) {
         return false;
       }
     });
-    console.log(userCommunities);
+    log(userCommunities);
+
+    return new Response(JSON.stringify({ communities: userCommunities }), {
+      status: 200,
+      headers: CORS_HEADERS,
+    });
+  } catch (e) {
+    console.error("Fetch communities error:", e);
+    return new Response(JSON.stringify({ message: "Internal Server Error" }), {
+      status: 500,
+      headers: CORS_HEADERS,
+    });
+  }
+}
+async function fetchCommunitiesPublic(token) {
+  try {
+    const userStmt = db.prepare("SELECT name FROM users WHERE token = ?");
+    const user = userStmt.get(token);
+
+    if (!user) {
+      return new Response(JSON.stringify({ message: "User not found" }), {
+        status: 404,
+        headers: CORS_HEADERS,
+      });
+    }
+
+    const communitiesStmt = db.prepare("SELECT * FROM guilds");
+    const allCommunities = communitiesStmt.all();
+    log(allCommunities);
+
+    const userCommunities = allCommunities.filter((community) => {
+      try {
+        const members = JSON.parse(community.members);
+        log(members);
+        return Array.isArray(members) && community.visibility == "public" &&
+          !members.includes(user);
+      } catch (e) {
+        return false;
+      }
+    });
+    log(userCommunities);
 
     return new Response(JSON.stringify({ communities: userCommunities }), {
       status: 200,
@@ -445,11 +525,9 @@ async function fetchCommunities(token) {
   }
 }
 Deno.serve({
-  port: 2387,
+  port: 3000,
   onListen() {
-    console.log(chalk.red.bold(
-`maelink gen2 server`));
-console.log(chalk.blue.bold(`Running on port 2387`));
+    log(chalk.green.bold(`[HTTP server initialized at port 3000!]`));
   },
 }, async (req) => {
   if (req.method === "OPTIONS") {
@@ -483,15 +561,15 @@ console.log(chalk.blue.bold(`Running on port 2387`));
   let regResult;
   let authResult;
   let postResult;
-  let fetchResult;
   let createResult;
   let joinResult;
   let comfetchResult;
   let fetchIndResult;
 
+
   switch (requestBody?.type) {
     case "reg": {
-      regResult = await register(requestBody.user, requestBody.password, requestBody.code);
+      regResult = await register(requestBody.user, requestBody.password);
       return regResult;
     }
     case "auth": {
@@ -500,30 +578,38 @@ console.log(chalk.blue.bold(`Running on port 2387`));
     }
     case "post": {
       postResult = await post(
-        requestBody.community,
         requestBody.p,
         requestBody.token,
       );
       return postResult;
-    }
-    case "fetch": {
-      fetchResult = await fetch(requestBody.community, requestBody.offset);
-      return fetchResult;
     }
     case "fetchIndividual": {
       fetchIndResult = await fetchIndividual(requestBody.id);
       return fetchIndResult;
     }
     case "communityCreate": {
-      createResult = await createCommunity(requestBody.name, requestBody.token);
+      createResult = await createCommunity(
+        requestBody.name,
+        requestBody.token,
+        requestBody.visibility,
+        requestBody.code,
+      );
       return createResult;
     }
     case "communityJoin": {
-      joinResult = await joinCommunity(requestBody.name, requestBody.token);
+      joinResult = await joinCommunity(
+        requestBody.name,
+        requestBody.token,
+        requestBody.code,
+      );
       return joinResult;
     }
     case "communityFetch": {
       comfetchResult = await fetchCommunities(requestBody.token);
+      return comfetchResult;
+    }
+    case "communityFetchPublic": {
+      comfetchResult = await fetchCommunitiesPublic(requestBody.token);
       return comfetchResult;
     }
     default: {
@@ -536,4 +622,113 @@ console.log(chalk.blue.bold(`Running on port 2387`));
       });
     }
   }
+});
+const clientsws = new Map();
+let client;
+Deno.serve({
+  port: 3001,
+  onListen() {
+    log(chalk.blue.bold(`[WebSocket server initialized at port 3001!]`));
+  },
+}, async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: CORS_HEADERS });
+  }
+
+  if (req.headers.get("upgrade") === "websocket") {
+    const { socket, response } = Deno.upgradeWebSocket(req);
+
+    socket.onopen = () => {
+      log("WebSocket connected");
+    };
+
+    socket.onmessage = async (event) => {
+      try {
+        switch (event.data.cmd) {
+          case "gpost":
+            const communityStmt = db.prepare(
+              "SELECT * FROM guilds WHERE name = ?",
+            );
+            const community = communityStmt.get(event.data.guild); // guild -> event.data.guild
+
+            if (!community) {
+              return new Response(
+                JSON.stringify({ message: "Bubble not found" }),
+                {
+                  status: 404,
+                  headers: CORS_HEADERS,
+                },
+              );
+            } else {
+              const checkStmt = db.prepare(
+                "SELECT * FROM guilds WHERE members = ?",
+              );
+              const state = checkStmt.get(user);
+              if (!state) {
+                return socket.send(
+                  JSON.stringify({
+                    error: true,
+                    message: "User is not in this Bubble",
+                  }),
+                );
+              }
+              try {
+                const currentPosts = JSON.parse(community.posts || "[]");
+                currentPosts.push({
+                  ts: Date.now().toString(),
+                  id: crypto.randomUUID(),
+                  u: user.name,
+                  p: content,
+                });
+                db.exec(
+                  `UPDATE guilds.${community} SET posts = ? WHERE name = ?`,
+                  [
+                    JSON.stringify(currentPosts),
+                    guild,
+                  ],
+                );
+                socket.send(
+                  JSON.stringify({
+                    error: false,
+                    message: "Posted successfully",
+                  }),
+                );
+                for (client of clientsws) {
+                  client.send(JSON.stringify({ message: currentPosts }));
+                }
+              } catch (e) {
+                console.error(e);
+                return socket.send(
+                  JSON.stringify({
+                    error: true,
+                    message: `Internal server error: ${e}`,
+                  }),
+                );
+              }
+            }
+        }
+
+        if (result) {
+          const body = await result.text();
+          socket.send(body);
+        }
+      } catch (error) {
+        console.error("WebSocket message error:", error);
+        socket.send(JSON.stringify({ message: "Internal Server Error" }));
+      }
+    };
+
+    socket.onclose = () => {
+      log("WebSocket closed");
+      clientsws.delete(socket);
+    };
+
+    socket.onerror = (error) => {
+      console.error("WebSocket error:", error);
+    };
+
+    return response;
+  }
+
+  return new Response("Upgrade to WebSocket required", { status: 426 });
 });
