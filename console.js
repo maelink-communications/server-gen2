@@ -1,6 +1,18 @@
 // deno-lint-ignore-file
 import chalk from "npm:chalk";
 
+// DEMO MODE SUPPORT
+let demoMode = false;
+
+export function enableDemoMode() {
+  demoMode = true;
+  console.log('[DEMO MODE ENABLED] All dangerous actions are simulated!');
+}
+
+function isDemoMode() {
+  return demoMode;
+}
+
 let consoleCoreFunctions = null;
 
 let startTime = performance.now();
@@ -96,8 +108,8 @@ function printStatusLines(elapsed) {
   }
   const timePart = chalk.grey.dim(baseTimeStr) + scrollIndicator;
 
-  const name = chalk.grey.dim("Codename: simplesample^2");
-  const versionText = `v0.1.0 | ULTIMATE (ss2-ultimate//050525)`;
+  const name = chalk.grey.dim("maelink [gen2] | server");
+  const versionText = `v0.2.0 | more cool stuff (ss2-patches//100525)`;
 
   const { r, g, b } = calculateColor(elapsed);
   const coloredVersion = chalk.rgb(r, g, b)(versionText);
@@ -643,6 +655,15 @@ async function executeCommand(commandString, coreFunctions) {
       const userInput = prompt(chalk.red.bold("Confirmation: "));
 
       if (userInput === confirmationPhrase) {
+        if (isDemoMode()) {
+          logToConsoleBuffer(
+            chalk.yellow(
+              "[DEMO] Would delete database file 'data.db' (simulated)",
+            ),
+          );
+          break;
+        }
+
         logToConsoleBuffer(
           chalk.yellow(
             "Confirmation received. Attempting to delete database file...",
@@ -746,3 +767,6 @@ export function startConsoleInterface(coreFunctions) {
 
   logToConsoleBuffer(chalk.green("Console interface ready."));
 }
+
+// Export demoMode for external use
+export { demoMode };
