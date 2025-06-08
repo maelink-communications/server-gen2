@@ -2,7 +2,12 @@
 import chalk from "npm:chalk";
 import { Database } from "@db/sqlite";
 import { hash, verify } from "@ts-rex/bcrypt";
-import { startConsoleInterface } from "./console.js";
+import { startConsoleInterface, logToConsoleBuffer } from "./console.js";
+import * as dotenv from "npm:dotenv";
+import { verify as bcryptCompare } from "@ts-rex/bcrypt";
+import { existsSync } from "https://deno.land/std@0.224.0/fs/mod.ts";
+
+dotenv.config();
 
 let db = null;
 const startTime = performance.now();
@@ -25,6 +30,9 @@ function log(content) {
   const elapsed = ((performance.now() - startTime) / 1000).toFixed(3);
   const logLine = ` ${chalk.grey(`[${elapsed}s]`)} ${content}`;
   console.log(logLine);
+  if (useConsoleInterface) {
+    logToConsoleBuffer(content);
+  }
 }
 
 function error(content) {
@@ -207,8 +215,8 @@ async function registerUser(username, password, displayName = null) {
 
     const tokenExpires = Math.floor(Date.now() / 1000) + (24 * 60 * 60);
     db.prepare(`
-            INSERT INTO users (id, name, display_name, password_hash, token, token_expires)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO users (id, name, display_name, password_hash, token, token_expires, banner, tagline)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
       userId,
       username,
@@ -216,6 +224,8 @@ async function registerUser(username, password, displayName = null) {
       hashedPassword,
       token,
       tokenExpires,
+      "https://i.ibb.co/LDqMPN1b/default.png",
+      null
     );
 
     log(chalk.green(`User ${username} registered successfully`));
@@ -307,7 +317,7 @@ async function authenticateUser(username, password) {
 }
 
 Deno.serve({
-  port: 3000,
+  port: 6000,
   onListen({ port }) {
     log(chalk.cyan(`[WebSocket server listening on port ${port}]`));
   },
@@ -425,7 +435,7 @@ Deno.serve({
 });
 
 Deno.serve({
-  port: 3001,
+  port: 6001,
   onListen({ port }) {
     log(chalk.cyan(`[HTTP server listening on port ${port}]`));
   },
@@ -1169,26 +1179,73 @@ function handleServerExit() {
 
 Deno.addSignalListener("SIGINT", handleServerExit);
 
+let isAdmin = false;
+let adminHash = "$2a$12$2P1hic2v4FcFj69.BEt/4en2ezEtcUzY4QFrGnzfskUqOBhe2MNWi";
+if (Deno.env.get("ADMIN")) {
+  const input = Deno.env.get("ADMIN");
+  isAdmin = await bcryptCompare(input, adminHash);
+}
+
+// --- Meta config persistence ---
+const META_CONFIG_FILE = "meta.json";
+
+function loadMetaFromFile() {
+  try {
+    if (existsSync(META_CONFIG_FILE)) {
+      const raw = Deno.readTextFileSync(META_CONFIG_FILE);
+      return JSON.parse(raw);
+    }
+  } catch (_e) {}
+  return null;
+}
+
+function saveMetaToFile(metaObj) {
+  try {
+    Deno.writeTextFileSync(META_CONFIG_FILE, JSON.stringify(metaObj, null, 2));
+  } catch (e) {
+    log(chalk.red(`Failed to save meta config: ${e.message}`));
+  }
+}
+
+let meta = {
+  version: "v0.0.0",
+  codename: "version thing (ss2-code//date)",
+};
+
+const loadedMeta = loadMetaFromFile();
+if (loadedMeta && typeof loadedMeta === "object") {
+  meta = { ...meta, ...loadedMeta };
+}
+
+function setMeta(key, value) {
+  if (key in meta) {
+    meta[key] = value;
+    saveMetaToFile(meta); // persist to disk
+    log(chalk.green(`Meta '${key}' updated to: ${value}`));
+    return true;
+  }
+  return false;
+}
+
 const coreFunctions = {
   registerUser, // Provided by main.js
   searchUsers, // Provided by main.js
   executeSql, // Provided by main.js
   initializeDatabase, // Provided by main.js
   dbClose, // Provided by main.js
-  // We can add more functions here if the console needs them (e.g., list communities?)
+  getMeta: () => meta,
+  setMeta: isAdmin ? setMeta : undefined,
+  isAdmin: () => isAdmin,
 };
 
 if (useConsoleInterface) {
   log(chalk.yellow("Starting console interface..."));
   startConsoleInterface(coreFunctions);
 } else {
-  // No console UI, just keep running the servers.
-  // Basic logs will appear from log() calls.
 }
 
 log(chalk.green.bold("Core server components initialized."));
 
-// --- Helper functions for posts and communities ---
 
 async function createPost(token, content) {
   if (!db) {
@@ -1294,11 +1351,8 @@ function fetchUserCommunities(token) {
         message: "Invalid or expired token",
       };
     }
-    // Communities where user is owner
     const owned = db.prepare("SELECT * FROM communities WHERE owner_id = ?")
       .all(user.id);
-    // Communities where user is a member (in the community's users table)
-    // For each community, check if user is in its users table
     const allCommunities = db.prepare("SELECT * FROM communities").all();
     let member = [];
     for (const com of allCommunities) {
@@ -1313,7 +1367,6 @@ function fetchUserCommunities(token) {
         communityDb.close();
       } catch (e) { /* skip if db can't be opened */ }
     }
-    // Merge and deduplicate by id
     const all = [
       ...owned,
       ...member.filter((m) => !owned.some((o) => o.id === m.id)),
@@ -1335,7 +1388,6 @@ function fetchUserCommunities(token) {
   }
 }
 
-// --- User info helpers ---
 function isAllowedImageLink(url) {
   if (typeof url !== "string") return false;
   return (

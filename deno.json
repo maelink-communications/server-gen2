@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "@db/sqlite": "jsr:@db/sqlite@^0.12.0",
+    "@ts-rex/bcrypt": "jsr:@ts-rex/bcrypt@^1.0.3"
+  }
+}

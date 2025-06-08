@@ -108,8 +108,14 @@ function printStatusLines(elapsed) {
   }
   const timePart = chalk.grey.dim(baseTimeStr) + scrollIndicator;
 
-  const name = chalk.grey.dim("maelink [gen2] | server");
-  const versionText = `v0.2.0 | more cool stuff (ss2-patches//100525)`;
+  let name = chalk.grey.dim("maelink [gen2] | server");
+  let versionText = `v0.2.0 | more cool stuff (ss2-patches//100525)`;
+  if (consoleCoreFunctions && typeof consoleCoreFunctions.getMeta === "function") {
+    const meta = consoleCoreFunctions.getMeta();
+    if (meta) {
+      versionText = `${meta.version} | ${meta.codename}`;
+    }
+  }
 
   const { r, g, b } = calculateColor(elapsed);
   const coloredVersion = chalk.rgb(r, g, b)(versionText);
@@ -157,7 +163,7 @@ function updateConsole() {
   console.log(helpTextLine);
   console.log(separatorLine);
 
-  const availableLogLines = rows - 4; // Rows for status, help, separator, and prompt
+  const availableLogLines = rows - 4;
   const maxScrollOffset = Math.max(0, logs.length - availableLogLines);
   logScrollOffset = Math.min(logScrollOffset, maxScrollOffset);
 
@@ -224,8 +230,8 @@ function prompt(question) {
   return response;
 }
 
-function logToConsoleBuffer(content) {
-  logScrollOffset = 0; // Snap to bottom when new log arrives
+export function logToConsoleBuffer(content) {
+  logScrollOffset = 0;
   const elapsed = ((performance.now() - startTime) / 1000).toFixed(3);
   const logLine = ` ${chalk.grey(`[${elapsed}s]`)} ${content}`;
   logs.push(logLine);
@@ -239,7 +245,7 @@ function consoleErrorDisplay(content) {
   logs.push(errorLogLine);
 
   if (consoleUpdateInterval) clearInterval(consoleUpdateInterval);
-  isHandlingInput = true; // Prevent input during this message
+  isHandlingInput = true;
 
   let wasRaw = false;
   try {
@@ -251,7 +257,7 @@ function consoleErrorDisplay(content) {
   console.log(chalk.red.bold("\n*** CONSOLE COMMAND ERROR ***"));
   console.log(errorLogLine);
   console.log();
-  prompt(chalk.yellow("Press Enter to continue...")); // Use console.js prompt
+  prompt(chalk.yellow("Press Enter to continue..."));
 
   if (wasRaw) {
     try {
@@ -259,8 +265,8 @@ function consoleErrorDisplay(content) {
     } catch (e) {}
   }
   isHandlingInput = false;
-  consoleUpdateInterval = setInterval(updateConsole, CONSOLE_UPDATE_INTERVAL); // Restart interval
-  updateConsole(); // Redraw UI
+  consoleUpdateInterval = setInterval(updateConsole, CONSOLE_UPDATE_INTERVAL);
+  updateConsole();
 }
 
 async function startInputListener(executeCommandCallback) {
@@ -286,7 +292,7 @@ async function startInputListener(executeCommandCallback) {
         currentInputBuffer = "";
 
         if (commandToExecute) {
-          logToConsoleBuffer(chalk.yellow("> ") + loggedInput); // Log to console buffer
+          logToConsoleBuffer(chalk.yellow("> ") + loggedInput);
           if (
             commandToExecute &&
             (commandHistory.length === 0 ||
@@ -294,7 +300,7 @@ async function startInputListener(executeCommandCallback) {
           ) {
             commandHistory.push(commandToExecute);
           }
-          await executeCommandCallback(commandToExecute); // Call the passed-in executor
+          await executeCommandCallback(commandToExecute);
         } else {
           updateConsole();
         }
@@ -307,16 +313,16 @@ async function startInputListener(executeCommandCallback) {
         }
         updateConsole();
         i++;
-      } else if (char === "\x03") { // Ctrl+C
+      } else if (char === "\x03") {
         handleExit();
-        i++; // Technically handleExit might exit, but increment anyway
-      } else if (char === "\x1b") { // Escape character
+        i++;
+      } else if (char === "\x1b") {
         if (i + 1 < text.length) {
           const nextChar = text[i + 1];
-          if (nextChar === "[") { // CSI sequence
+          if (nextChar === "[") {
             if (i + 2 < text.length) {
               const commandChar = text[i + 2];
-              if (commandChar === "A") { // Up Arrow
+              if (commandChar === "A") {
                 if (historyIndex === -1) currentInputBuffer = inputBuffer;
                 if (commandHistory.length > 0) {
                   historyIndex = Math.max(
@@ -328,7 +334,7 @@ async function startInputListener(executeCommandCallback) {
                   inputBuffer = commandHistory[historyIndex];
                 }
                 i += 3;
-              } else if (commandChar === "B") { // Down Arrow
+              } else if (commandChar === "B") {
                 if (historyIndex !== -1) {
                   historyIndex++;
                   if (historyIndex >= commandHistory.length) {
@@ -340,13 +346,13 @@ async function startInputListener(executeCommandCallback) {
                 }
                 i += 3;
               } else {
-                i++; // Unknown CSI
+                i++;
               }
             } else {
               partialEscapeSequence = text.substring(i);
               break;
             }
-          } else if (nextChar === "w") { // Alt+W (Scroll Up)
+          } else if (nextChar === "w") {
             const availableLogLines = terminalRows - 4;
             const maxScrollOffset = Math.max(
               0,
@@ -355,12 +361,12 @@ async function startInputListener(executeCommandCallback) {
             logScrollOffset = Math.min(maxScrollOffset, logScrollOffset + 1);
             updateConsole();
             i += 2;
-          } else if (nextChar === "s") { // Alt+S (Scroll Down)
+          } else if (nextChar === "s") {
             logScrollOffset = Math.max(0, logScrollOffset - 1);
             updateConsole();
             i += 2;
           } else {
-            i++; // Unknown ESC sequence
+            i++;
           }
         } else {
           partialEscapeSequence = char;
@@ -402,6 +408,8 @@ function handleExit() {
       );
     }
   }
+  // Actually exit the process
+  Deno.exit(0);
 }
 
 async function executeCommand(commandString, coreFunctions) {
@@ -478,7 +486,7 @@ async function executeCommand(commandString, coreFunctions) {
       console.log(chalk.cyan("Your friendly neighborhood help screen!"));
       console.log(chalk.cyan("─".repeat(columns)));
       console.log(chalk.grey(" Use Alt+W / Alt+S to scroll through logs."));
-      console.log(); // Add a blank line for spacing
+      console.log();
       console.log(chalk.blue(" register") + " - Register a new user.");
       console.log(
         chalk.blue(" search <term>") +
@@ -506,6 +514,10 @@ async function executeCommand(commandString, coreFunctions) {
       console.log(
         chalk.blue(" exit") +
           "     - Exit the application (console interface).",
+      );
+      console.log(
+        chalk.blue(" setmeta") +
+          "     - Change the metadata of the server. Usage: setmeta <version|codename> <value>",
       );
       console.log(chalk.cyan("─".repeat(columns)));
       prompt(chalk.yellow("Press Enter to continue..."));
@@ -553,7 +565,7 @@ async function executeCommand(commandString, coreFunctions) {
 
         const result = coreFunctions.executeSql(commandArgs);
         if (result.success) {
-          if (Array.isArray(result.payload)) { // SELECT
+          if (Array.isArray(result.payload)) {
             if (result.payload.length > 0) {
               const headers = Object.keys(result.payload[0]);
               console.log(chalk.underline(headers.join(" | ")));
@@ -570,7 +582,7 @@ async function executeCommand(commandString, coreFunctions) {
                 ),
               );
             }
-          } else { // Other statements
+          } else {
             console.log(chalk.green(`Query executed successfully!`));
             console.log(chalk.grey(`  Changes: ${result.payload.changes}`));
             if (
@@ -676,7 +688,7 @@ async function executeCommand(commandString, coreFunctions) {
             logToConsoleBuffer(
               chalk.grey("Closing database connection via core function..."),
             );
-            coreFunctions.dbClose(); // Call the passed function
+            coreFunctions.dbClose();
             logToConsoleBuffer(
               chalk.grey("Database connection closed via core."),
             );
@@ -688,13 +700,13 @@ async function executeCommand(commandString, coreFunctions) {
             );
           }
 
-          await Deno.remove("data.db"); // Use async remove
+          await Deno.remove("data.db");
           logToConsoleBuffer(
             chalk.green(
               "Database file 'data.db' deleted successfully. Exiting console.",
             ),
           );
-          handleExit(); // Exit the console interface
+          handleExit();
         } catch (deleteError) {
           logToConsoleBuffer(
             chalk.red(
@@ -713,8 +725,26 @@ async function executeCommand(commandString, coreFunctions) {
       }
       break;
     }
+    case "setmeta": {
+      if (!coreFunctions.isAdmin || !coreFunctions.isAdmin()) {
+        logToConsoleBuffer(chalk.red("You do not have an admin key set. Access denied."));
+        break;
+      }
+      const [metaKey, ...metaValueArr] = args;
+      const metaValue = metaValueArr.join(" ");
+      if (!metaKey || !metaValue) {
+        logToConsoleBuffer(chalk.red("Usage: setmeta <version|codename> <value>"));
+        break;
+      }
+      if (typeof coreFunctions.setMeta === "function" && coreFunctions.setMeta(metaKey, metaValue)) {
+        logToConsoleBuffer(chalk.green(`Meta '${metaKey}' updated.`));
+      } else {
+        logToConsoleBuffer(chalk.red("Failed to update meta. Valid keys: version, codename"));
+      }
+      break;
+    }
     case "exit": {
-      handleExit(); // This just cleans up the console
+      handleExit();
 
       break;
     }
@@ -730,7 +760,7 @@ async function executeCommand(commandString, coreFunctions) {
   if (!consoleUpdateInterval) {
     consoleUpdateInterval = setInterval(updateConsole, CONSOLE_UPDATE_INTERVAL);
   }
-  updateConsole(); // Redraw the main UI
+  updateConsole();
 }
 
 export function startConsoleInterface(coreFunctions) {
@@ -751,13 +781,13 @@ export function startConsoleInterface(coreFunctions) {
           `Critical Error: Core function '${fnName}' not provided to startConsoleInterface. Console disabled.`,
         ),
       );
-      return; // Do not start interface if essential functions are missing
+      return;
     }
   }
 
   try {
     console.log("\x1b[?25l");
-  } catch (_e) { /* ignore */ } // Hide cursor, ignore errors
+  } catch (_e) { /* ignore */ }
 
   if (!consoleUpdateInterval) {
     consoleUpdateInterval = setInterval(updateConsole, CONSOLE_UPDATE_INTERVAL);
@@ -768,5 +798,4 @@ export function startConsoleInterface(coreFunctions) {
   logToConsoleBuffer(chalk.green("Console interface ready."));
 }
 
-// Export demoMode for external use
 export { demoMode };
