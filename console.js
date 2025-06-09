@@ -1,7 +1,5 @@
 // deno-lint-ignore-file
 import chalk from "npm:chalk";
-
-// DEMO MODE SUPPORT
 let demoMode = false;
 
 export function enableDemoMode() {
@@ -109,7 +107,7 @@ function printStatusLines(elapsed) {
   const timePart = chalk.grey.dim(baseTimeStr) + scrollIndicator;
 
   let name = chalk.grey.dim("maelink [gen2] | server");
-  let versionText = `v0.2.0 | more cool stuff (ss2-patches//100525)`;
+  let versionText;
   if (consoleCoreFunctions && typeof consoleCoreFunctions.getMeta === "function") {
     const meta = consoleCoreFunctions.getMeta();
     if (meta) {
@@ -146,6 +144,29 @@ function printStatusLines(elapsed) {
     finalStringLine2,
     separator,
   ];
+}
+
+let cursorVisible = true;
+let cursorBlinkInterval = null;
+
+function getRainbowCursorChar(input, cursorPos) {
+  const MAX_RAINBOW_LENGTH = 100;
+  const frequency = 0.3;
+  const amplitude = 60;
+  const center = 195;
+  const timeOffset = performance.now() / 1000;
+
+  let i = (input.length > 0 && cursorPos > 0)
+    ? Math.min(cursorPos - 1, input.length - 1, MAX_RAINBOW_LENGTH - 1)
+    : 0;
+
+  let r = Math.sin(frequency * (i + timeOffset) + 0) * amplitude + center;
+  let g = Math.sin(frequency * (i + timeOffset) + 2 * Math.PI / 3) * amplitude + center;
+  let b = Math.sin(frequency * (i + timeOffset) + 4 * Math.PI / 3) * amplitude + center;
+
+  const hex = "#" +
+    [r, g, b].map((x) => Math.max(0, Math.min(255, Math.round(x))).toString(16).padStart(2, "0")).join("");
+  return chalk.hex(hex)("▉");
 }
 
 function updateConsole() {
@@ -190,16 +211,39 @@ function updateConsole() {
   const safetyBuffer = 5;
 
   let inputDisplay;
+  let cursorPos = inputBuffer.length;
+  let inputRaw = inputBuffer;
   if (rawLength > availableInputWidth - safetyBuffer) {
     const startIndex = Math.max(0, rawLength - availableInputWidth);
     inputDisplay = inputBuffer.substring(startIndex);
+    inputRaw = inputBuffer.substring(startIndex);
+    cursorPos = inputDisplay.length;
   } else {
     inputDisplay = applyPastelRainbow(inputBuffer);
+    inputRaw = inputBuffer;
+    cursorPos = inputBuffer.length;
   }
 
-  const promptLine = chalk.yellow(promptSymbol) + inputDisplay;
+  let promptLine;
+  if (inputDisplay.length === 0) {
+    promptLine = chalk.yellow(promptSymbol) + (cursorVisible ? getRainbowCursorChar("", 0) : " ");
+  } else {
+    promptLine = chalk.yellow(promptSymbol) + inputDisplay + (cursorVisible ? getRainbowCursorChar(inputRaw, cursorPos) : " ");
+  }
 
   Deno.stdout.writeSync(new TextEncoder().encode(promptLine));
+}
+function startCursorBlink() {
+  if (cursorBlinkInterval) clearInterval(cursorBlinkInterval);
+  cursorBlinkInterval = setInterval(() => {
+    cursorVisible = !cursorVisible;
+    updateConsole();
+  }, 500);
+}
+function stopCursorBlink() {
+  if (cursorBlinkInterval) clearInterval(cursorBlinkInterval);
+  cursorBlinkInterval = null;
+  cursorVisible = true;
 }
 
 function prompt(question) {
@@ -230,13 +274,23 @@ function prompt(question) {
   return response;
 }
 
+let showLogTimestamps = true;
+
 export function logToConsoleBuffer(content) {
   logScrollOffset = 0;
-  const elapsed = ((performance.now() - startTime) / 1000).toFixed(3);
-  const logLine = ` ${chalk.grey(`[${elapsed}s]`)} ${content}`;
+  let logLine;
+  if (showLogTimestamps) {
+    const elapsed = ((performance.now() - startTime) / 1000).toFixed(3);
+    logLine = ` ${chalk.grey(`[${elapsed}s]`)} ${content}`;
+  } else {
+    logLine = ` ${content}`;
+  }
   logs.push(logLine);
-}
 
+  if (!isHandlingInput) {
+    updateConsole();
+  }
+}
 function consoleErrorDisplay(content) {
   const elapsed = ((performance.now() - startTime) / 1000).toFixed(3);
   const errorLogLine = ` ${chalk.grey(`[${elapsed}s]`)} ${
@@ -435,8 +489,6 @@ async function executeCommand(commandString, coreFunctions) {
   } else {
   }
 
-  logToConsoleBuffer(chalk.blue(`Executing command: ${commandString}`));
-
   switch (command) {
     case "register": {
       const { columns } = Deno.consoleSize();
@@ -518,6 +570,14 @@ async function executeCommand(commandString, coreFunctions) {
       console.log(
         chalk.blue(" setmeta") +
           "     - Change the metadata of the server. Usage: setmeta <version|codename> <value>",
+      );
+      console.log(
+        chalk.blue(" setautoupdate") +
+          " - Enable/disable auto-update from GitHub. Usage: setautoupdate <true|false>",
+      );
+      console.log(
+        chalk.blue(" forceupdate") +
+          "    - Force an immediate update check/pull from GitHub.",
       );
       console.log(chalk.cyan("─".repeat(columns)));
       prompt(chalk.yellow("Press Enter to continue..."));
@@ -733,14 +793,37 @@ async function executeCommand(commandString, coreFunctions) {
       const [metaKey, ...metaValueArr] = args;
       const metaValue = metaValueArr.join(" ");
       if (!metaKey || !metaValue) {
-        logToConsoleBuffer(chalk.red("Usage: setmeta <version|codename> <value>"));
+        logToConsoleBuffer(chalk.red("Usage: setmeta <version|codename|autoupdate> <value>"));
         break;
       }
       if (typeof coreFunctions.setMeta === "function" && coreFunctions.setMeta(metaKey, metaValue)) {
-        logToConsoleBuffer(chalk.green(`Meta '${metaKey}' updated.`));
+         // do nothing
       } else {
-        logToConsoleBuffer(chalk.red("Failed to update meta. Valid keys: version, codename"));
+        logToConsoleBuffer(chalk.red("Failed to update metadata. Valid keys: version, codename, autoupdate"));
       }
+      break;
+    }
+    case "setautoupdate": {
+      const [value] = args;
+      if (typeof coreFunctions.setAutoUpdate !== "function") {
+        logToConsoleBuffer(chalk.red("Auto-update not supported."));
+        break;
+      }
+      if (value !== "true" && value !== "false" && value !== "1" && value !== "0") {
+        logToConsoleBuffer(chalk.red("Usage: setautoupdate <true|false>"));
+        break;
+      }
+      coreFunctions.setAutoUpdate(value === "true" || value === "1");
+      logToConsoleBuffer(chalk.green(`Auto-update set to: ${value}`));
+      break;
+    }
+    case "forceupdate": {
+      if (typeof coreFunctions.checkAndAutoUpdate !== "function") {
+        logToConsoleBuffer(chalk.red("Auto-update not supported."));
+        break;
+      }
+      logToConsoleBuffer(chalk.yellow("Forcing update check..."));
+      await coreFunctions.checkAndAutoUpdate();
       break;
     }
     case "exit": {
@@ -793,9 +876,14 @@ export function startConsoleInterface(coreFunctions) {
     consoleUpdateInterval = setInterval(updateConsole, CONSOLE_UPDATE_INTERVAL);
   }
 
+  startCursorBlink(); // Start blinking cursor
+
   startInputListener((cmd) => executeCommand(cmd, coreFunctions));
 
   logToConsoleBuffer(chalk.green("Console interface ready."));
+  // Hide timestamps after core server components initialized
+  logToConsoleBuffer(chalk.green.bold("Core server components initialized."));
+  showLogTimestamps = false;
 }
 
 export { demoMode };

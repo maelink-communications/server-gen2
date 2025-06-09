@@ -1,4 +1,6 @@
 {
-  "version": "v0.2.1",
-  "codename": "more shi (g2-wesoback//080625)"
+  "version": "v0.2.2",
+  "codename": "cursor and autoupdate (g2-stuff//090625)",
+  "autoupdate": true,
+  "lastSha": "007cff5d7fb8c601cb7425e1d5f6076f68a11640"
 }

@@ -1186,7 +1186,6 @@ if (Deno.env.get("ADMIN")) {
   isAdmin = await bcryptCompare(input, adminHash);
 }
 
-// --- Meta config persistence ---
 const META_CONFIG_FILE = "meta.json";
 
 function loadMetaFromFile() {
@@ -1210,6 +1209,7 @@ function saveMetaToFile(metaObj) {
 let meta = {
   version: "v0.0.0",
   codename: "version thing (ss2-code//date)",
+  autoupdate: false,
 };
 
 const loadedMeta = loadMetaFromFile();
@@ -1219,23 +1219,77 @@ if (loadedMeta && typeof loadedMeta === "object") {
 
 function setMeta(key, value) {
   if (key in meta) {
+    if (key === "autoupdate") {
+      value = value === true || value === "true" || value === "1";
+    }
     meta[key] = value;
-    saveMetaToFile(meta); // persist to disk
-    log(chalk.green(`Meta '${key}' updated to: ${value}`));
+    saveMetaToFile(meta);
+    log(chalk.green(`Metadata key '${key}' updated to: ${value}`));
     return true;
   }
   return false;
 }
+async function checkAndAutoUpdate() {
+  if (!meta.autoupdate) return;
+  try {
+    log(chalk.cyan("Checking for updates from GitHub..."));
+    const repo = "maelink-communications/server-gen2";
+    const branch = "simplesample2";
+    const apiUrl = `https://api.github.com/repos/${repo}/commits/${branch}`;
+    const res = await fetch(apiUrl);
+    if (!res.ok) {
+      const errText = await res.text();
+      log(chalk.yellow(`Failed to check for updates from GitHub. HTTP ${res.status}: ${errText}`));
+      return;
+    }
+    const data = await res.json();
+    const latestSha = data.sha;
+    if (meta.lastSha && meta.lastSha === latestSha) {
+      log(chalk.cyan("Already up to date with GitHub."));
+
+      if (meta._restartMsgShown) {
+        delete meta._restartMsgShown;
+        saveMetaToFile(meta);
+      }
+      return;
+    }
+    log(chalk.yellow("Update found. Pulling latest from GitHub..."));
+    const p = Deno.run({ cmd: ["git", "pull"], stdout: "piped", stderr: "piped" });
+    const { code } = await p.status();
+    const raw = await p.output();
+    const out = new TextDecoder().decode(raw);
+    if (code === 0) {
+      log(chalk.green("Update pulled successfully:\n" + out));
+      meta.lastSha = latestSha;
+      saveMetaToFile(meta);
+      if (!meta._restartMsgShown) {
+        log(chalk.yellow("Restart the server to apply updates."));
+        meta._restartMsgShown = true;
+        saveMetaToFile(meta);
+      }
+    } else {
+      const err = new TextDecoder().decode(await p.stderrOutput());
+      log(chalk.red("Failed to pull update:\n" + err));
+    }
+  } catch (e) {
+    log(chalk.red(`Auto-update error: ${e && e.stack ? e.stack : e}`));
+  }
+}
+setInterval(() => {
+  checkAndAutoUpdate();
+}, 1000 * 60 * 60);
 
 const coreFunctions = {
-  registerUser, // Provided by main.js
-  searchUsers, // Provided by main.js
-  executeSql, // Provided by main.js
-  initializeDatabase, // Provided by main.js
-  dbClose, // Provided by main.js
+  registerUser,
+  searchUsers,
+  executeSql,
+  initializeDatabase,
+  dbClose,
   getMeta: () => meta,
   setMeta: isAdmin ? setMeta : undefined,
   isAdmin: () => isAdmin,
+  setAutoUpdate: (v) => setMeta("autoupdate", v),
+  checkAndAutoUpdate,
 };
 
 if (useConsoleInterface) {
