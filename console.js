@@ -450,11 +450,10 @@ function handleExit() {
   if (typeof consoleCoreFunctions?.requestServerShutdown === "function") {
     consoleCoreFunctions.requestServerShutdown();
   } else {
-    logToConsoleBuffer(chalk.yellow("Exiting console interface only..."));
     try {
       Deno.stdin.setRaw(false);
       console.log("\x1b[?25h");
-      console.log(chalk.yellow("Exiting console interface..."));
+      console.log(chalk.yellow("Exiting..."));
     } catch (e) {
       console.warn(
         "Warning: Failed to restore terminal state cleanly.",
@@ -462,7 +461,6 @@ function handleExit() {
       );
     }
   }
-  // Actually exit the process
   Deno.exit(0);
 }
 
@@ -861,7 +859,7 @@ export function startConsoleInterface(coreFunctions) {
     if (typeof coreFunctions?.[fnName] !== "function") {
       console.error(
         chalk.red.bold(
-          `Critical Error: Core function '${fnName}' not provided to startConsoleInterface. Console disabled.`,
+          `Critical error: Core function '${fnName}' not provided to startConsoleInterface. Console disabled.`,
         ),
       );
       return;
@@ -876,13 +874,11 @@ export function startConsoleInterface(coreFunctions) {
     consoleUpdateInterval = setInterval(updateConsole, CONSOLE_UPDATE_INTERVAL);
   }
 
-  startCursorBlink(); // Start blinking cursor
+  startCursorBlink();
 
   startInputListener((cmd) => executeCommand(cmd, coreFunctions));
 
   logToConsoleBuffer(chalk.green("Console interface ready."));
-  // Hide timestamps after core server components initialized
-  logToConsoleBuffer(chalk.green.bold("Core server components initialized."));
   showLogTimestamps = false;
 }
 

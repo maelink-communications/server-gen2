@@ -30,7 +30,7 @@ function log(content) {
   const elapsed = ((performance.now() - startTime) / 1000).toFixed(3);
   const logLine = ` ${chalk.grey(`[${elapsed}s]`)} ${content}`;
   console.log(logLine);
-  if (useConsoleInterface) {
+  if (useConsoleInterface && typeof logToConsoleBuffer === "function") {
     logToConsoleBuffer(content);
   }
 }
